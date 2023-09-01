@@ -32,6 +32,10 @@ var (
 
 // NewHealthChecker returns a new HealthChecker based on transport.
 func NewHealthChecker(trans string, recursionDesired bool) HealthChecker {
+	if !recursionDesired {
+		log.Warningf("forward health no_rec:  %b", recursionDesired)
+	}
+
 	switch trans {
 	case transport.DNS, transport.TLS:
 		c := new(dns.Client)
@@ -79,6 +83,11 @@ func (h *dnsHc) Check(p *Proxy) error {
 }
 
 func (h *dnsHc) send(addr string) error {
+
+	if 1==1 {
+		// paas fix  disable upstream dns healthcheck for *.pdb.fmcc.com not support it
+		return nil
+	}
 	ping := new(dns.Msg)
 	ping.SetQuestion(".", dns.TypeNS)
 	ping.MsgHdr.RecursionDesired = h.recursionDesired

@@ -31,6 +31,7 @@ func NewProxy(addr, trans string) *Proxy {
 	}
 	p.health = NewHealthChecker(trans, true)
 	runtime.SetFinalizer(p, (*Proxy).finalizer)
+	log.Warningf("new proxy  %s", addr)
 	return p
 }
 

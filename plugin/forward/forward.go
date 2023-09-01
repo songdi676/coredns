@@ -7,7 +7,10 @@ package forward
 import (
 	"context"
 	"crypto/tls"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"regexp"
 	"sync/atomic"
 	"time"
 
@@ -43,6 +46,11 @@ type Forward struct {
 	expire        time.Duration
 	maxConcurrent int64
 
+	subMatch *regexp.Regexp
+	rewrite  []rewriteConfig
+	empty    bool
+	failFast *regexp.Regexp
+
 	opts options // also here for testing
 
 	// ErrLimitExceeded indicates that a query was rejected because the number of concurrent queries has exceeded
@@ -52,11 +60,21 @@ type Forward struct {
 	tapPlugin *dnstap.Dnstap // when the dnstap plugin is loaded, we use to this to send messages out.
 
 	Next plugin.Handler
+
+	subPlugins []*Forward
+}
+
+type rewriteConfig struct {
+	patternStr  string
+	pattern     *regexp.Regexp
+	replaceMent string
 }
 
 // New returns a new Forward.
 func New() *Forward {
-	f := &Forward{maxfails: 2, tlsConfig: new(tls.Config), expire: defaultExpire, p: new(random), from: ".", hcInterval: hcInterval, opts: options{forceTCP: false, preferUDP: false, hcRecursionDesired: true}}
+	f := &Forward{maxfails: 2, tlsConfig: new(tls.Config), expire: defaultExpire, p: new(random), from: ".", hcInterval: hcInterval, opts: options{forceTCP: false, preferUDP: false, hcRecursionDesired: true}, empty: false,
+		subPlugins: make([]*Forward, 0), rewrite: make([]rewriteConfig, 0),
+	}
 	return f
 }
 
@@ -74,10 +92,44 @@ func (f *Forward) Name() string { return "forward" }
 
 // ServeDNS implements plugin.Handler.
 func (f *Forward) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
-
+	for _, subf := range f.subPlugins {
+		ret, err := subf.serveDNS(ctx, w, r)
+		if err != nil {
+			return ret, err
+		}
+		if ret == dns.RcodeSuccess {
+			return ret, err
+		}
+	}
+	return plugin.NextOrFailure(f.Name(), f.Next, ctx, w, r)
+}
+func (f *Forward) serveDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg) (int, error) {
+	if f.empty {
+		log.Debugf("plugin to host empty")
+	}
 	state := request.Request{W: w, Req: r}
 	if !f.match(state) {
-		return plugin.NextOrFailure(f.Name(), f.Next, ctx, w, r)
+		// return plugin.NextOrFailure(f.Name(), f.Next, ctx, w, r)
+		return dns.RcodeServerFailure, nil
+	}
+
+	originalQuestionName := state.Req.Question[0].Name
+	for _, rewriteConfig := range f.rewrite {
+		log.Infof("rewrite config %v", rewriteConfig)
+		if rewriteConfig.pattern.MatchString(state.Name()) {
+			rep := rewriteConfig.pattern.ReplaceAllString(state.Name(), rewriteConfig.replaceMent)
+			log.Infof("rewrite name from %s to %s", state.Name(), rep)
+			state.Req.Question[0].Name = rep
+			state.Clear()
+		}
+	}
+	if f.failFast != nil {
+		log.Infof("failFast=%v", f.failFast)
+		subMatched := f.failFast.MatchString(state.Req.Question[0].Name)
+		if subMatched {
+			log.Infof("after rewrite,the name %s  is mismatched failFast %v.", state.Req.Question[0].Name, f.failFast)
+			return dns.RcodeNameError, nil
+		}
 	}
 
 	if f.maxConcurrent > 0 {
@@ -171,6 +223,7 @@ func (f *Forward) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 
 		// Check if the reply is correct; if not return FormErr.
 		if !state.Match(ret) {
+			log.Debugf("!state.Match state.Name=%s ret.Name=%v", state.Name(), &ret.Question[0].Name)
 			debug.Hexdumpf(ret, "Wrong reply for id: %d, %s %d", ret.Id, state.QName(), state.QType())
 
 			formerr := new(dns.Msg)
@@ -178,6 +231,8 @@ func (f *Forward) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 			w.WriteMsg(formerr)
 			return 0, nil
 		}
+		ret.Question[0].Name = originalQuestionName
+		log.Debugf("end before ret=%s", tojson(ret))
 
 		w.WriteMsg(ret)
 		return 0, nil
@@ -190,11 +245,29 @@ func (f *Forward) ServeDNS(ctx context.Context, w dns.ResponseWriter, r *dns.Msg
 	return dns.RcodeServerFailure, ErrNoHealthy
 }
 
+func tojson(v interface{}) string {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return fmt.Sprintf("marshal err %v", err)
+	}
+	return string(data)
+}
+
 func (f *Forward) match(state request.Request) bool {
-	if !plugin.Name(f.from).Matches(state.Name()) || !f.isAllowedDomain(state.Name()) {
+	if f.empty || !plugin.Name(f.from).Matches(state.Name()) || !f.isAllowedDomain(state.Name()) {
 		return false
 	}
 
+	log.Infof("state.Name=%v", state.Name())
+
+	if f.subMatch != nil {
+		log.Infof("subMatch=%v", f.subMatch)
+		subMatched := f.subMatch.MatchString(state.Name())
+		if !subMatched {
+			log.Infof("subMatch is mismatched")
+			return false
+		}
+	}
 	return true
 }
 

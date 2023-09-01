@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -53,37 +54,46 @@ func setup(c *caddy.Controller) error {
 
 // OnStartup starts a goroutines for all proxies.
 func (f *Forward) OnStartup() (err error) {
-	for _, p := range f.proxies {
-		p.start(f.hcInterval)
+	for _, subf := range f.subPlugins {
+		for _, p := range subf.proxies {
+			p.start(f.hcInterval)
+		}
 	}
 	return nil
 }
 
 // OnShutdown stops all configured proxies.
 func (f *Forward) OnShutdown() error {
-	for _, p := range f.proxies {
-		p.stop()
+	for _, subf := range f.subPlugins {
+		for _, p := range subf.proxies {
+			p.stop()
+		}
 	}
 	return nil
 }
 
 func parseForward(c *caddy.Controller) (*Forward, error) {
+	parentForward := New()
+
 	var (
-		f   *Forward
 		err error
 		i   int
 	)
 	for c.Next() {
-		if i > 0 {
-			return nil, plugin.ErrOnce
-		}
+		var f *Forward
+		//取消最多一个限制
+		// if i > 0 {
+		// 	return nil, plugin.ErrOnce
+		// }
 		i++
 		f, err = parseStanza(c)
 		if err != nil {
 			return nil, err
 		}
+		parentForward.subPlugins = append(parentForward.subPlugins, f)
+
 	}
-	return f, nil
+	return parentForward, nil
 }
 
 func parseStanza(c *caddy.Controller) (*Forward, error) {
@@ -105,12 +115,16 @@ func parseStanza(c *caddy.Controller) (*Forward, error) {
 
 	to := c.RemainingArgs()
 	if len(to) == 0 {
-		return f, c.ArgErr()
+		f.empty = true
+		// return f, nil
+		// return f, c.ArgErr()
 	}
 
 	toHosts, err := parse.HostPortOrFile(to...)
+	// 容忍forward解析错误
 	if err != nil {
-		return f, err
+		log.Warningf("[skiped] parseHostfileErr %s", err.Error)
+		toHosts = make([]string, 0)
 	}
 
 	transports := make([]string, len(toHosts))
@@ -262,6 +276,48 @@ func parseBlock(c *caddy.Controller, f *Forward) error {
 		}
 		f.ErrLimitExceeded = errors.New("concurrent queries exceeded maximum " + c.Val())
 		f.maxConcurrent = int64(n)
+
+	case "subMatch":
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		regexpPattern := c.Val()
+		log.Infof("regexpPattern = %s", regexpPattern)
+		reg, err := regexp.Compile(regexpPattern)
+		if err != nil {
+			return err
+		}
+		f.subMatch = reg
+	case "rewrite":
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		pattern := c.Val()
+		log.Infof("regexpPattern = %s", pattern)
+		reg, err := regexp.Compile(pattern)
+		if err != nil {
+			return err
+		}
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		replacement := c.Val()
+		f.rewrite = append(f.rewrite, rewriteConfig{
+			patternStr:  pattern,
+			pattern:     reg,
+			replaceMent: replacement,
+		})
+	case "failFast":
+		if !c.NextArg() {
+			return c.ArgErr()
+		}
+		regexpPattern := c.Val()
+		log.Infof("failFast = %s", regexpPattern)
+		reg, err := regexp.Compile(regexpPattern)
+		if err != nil {
+			return err
+		}
+		f.failFast = reg
 
 	default:
 		return c.Errf("unknown property '%s'", c.Val())
