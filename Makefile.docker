@@ -28,7 +28,7 @@ endif
 # VERSION is the version we should download and use.
 VERSION:=
 # DOCKER is the docker image repo we need to push to.
-DOCKER:=
+DOCKER:=songdi676
 NAME:=coredns
 GITHUB:=https://github.com/coredns/coredns/releases/download
 # mips is not in LINUX_ARCH because it's not supported by docker manifest. Keep this list in sync with the one in Makefile.release
