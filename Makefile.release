@@ -49,7 +49,7 @@ endif
 
 NAME:=coredns
 VERSION:=$(shell grep 'CoreVersion' coremain/version.go | awk '{ print $$3 }' | tr -d '"')
-GITHUB:=coredns
+GITHUB:=songdi676
 LINUX_ARCH:=amd64 arm arm64 mips64le ppc64le s390x mips
 
 all:
