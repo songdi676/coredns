@@ -81,7 +81,7 @@ func parseForward(c *caddy.Controller) (*Forward, error) {
 	)
 	for c.Next() {
 		var f *Forward
-		//È¡Ïû×î¶àÒ»¸öÏŞÖÆ
+		//å–æ¶ˆæœ€å¤šä¸€ä¸ªé™åˆ¶
 		// if i > 0 {
 		// 	return nil, plugin.ErrOnce
 		// }
@@ -121,7 +121,7 @@ func parseStanza(c *caddy.Controller) (*Forward, error) {
 	}
 
 	toHosts, err := parse.HostPortOrFile(to...)
-	// ÈİÈÌforward½âÎö´íÎó
+	// å®¹å¿forwardè§£æé”™è¯¯
 	if err != nil {
 		log.Warningf("[skiped] parseHostfileErr %s", err.Error)
 		toHosts = make([]string, 0)
