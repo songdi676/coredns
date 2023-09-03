@@ -49,6 +49,7 @@ jobs:
           name: v${{ steps.info.outputs.version }}
           tag_name: v${{ steps.info.outputs.version }}
           target_commitish: ${{ steps.info.outputs.commit }}
+          token: ${{ secrets.TOKEN }}
           files: |
             release/*.tgz
             release/*.tgz.sha256
